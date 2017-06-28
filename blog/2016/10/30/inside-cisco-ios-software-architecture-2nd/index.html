@@ -1,0 +1,232 @@
+
+<!doctype html>
+<html>
+  <head>
+  <meta charset="utf-8">
+  <meta content="" name="description">
+  <meta content="Your Name" name="author">
+  <title>Inside Cisco IOS Software Architecture(第二章,基本转发模式) — My Octopress Blog</title>
+  <link href="/favicon.png" rel="icon">
+  <link href="/stylesheets/default.css" rel="stylesheet">
+  <link href="/atom.xml" rel="alternate" title="My Octopress Blog" type="application/atom+xml">
+  <link href="/stylesheets/syntax.css" type="text/css" rel="stylesheet" />
+</head>
+  <body>
+    <header>
+      <nav>
+        <h3>
+          <a href="/blog/archives">主页</a>
+          <a href="/about">关于我</a>
+        </h3>
+      </nav>
+    </header>
+    <section>
+  <header>
+    <time datetime="2016-10-30T00:18:39-04:00">30.10.2016</time>
+    <h1><a href="/blog/2016/10/30/inside-cisco-ios-software-architecture-2nd/">Inside Cisco IOS Software Architecture(第二章,基本转发模式)</a></h1>
+  </header>
+  <article>
+    <p>这一章主要讲了这几个主要的转发模式:</p>
+
+<ul>
+<li>Process switching</li>
+<li>Fast switching</li>
+<li>Optimum switching</li>
+<li>CEF</li>
+</ul>
+
+
+<p>一个路由器最主要的任务其实就是把一个包从一个网络转发到另外一个网络当中.
+简单来说分为四部.</p>
+
+<ol>
+<li>包进入接口.</li>
+<li>看包的源地址,比较路由表.</li>
+<li>如果有match.转发.</li>
+<li>没有match丢弃.</li>
+</ol>
+
+
+<p>说起来这个东西并不难,但是所有的难点不过是如何在有限的资源下面提高性能.其实IOS有很多种方式来尝试实现快速转发.</p>
+
+<h1>Process Switching</h1>
+
+<p>这个其实是最基础的转发,很耗费CPU资源,唯一的优势就是可以实现包级别的负载均衡.
+这个图片说明一切.</p>
+
+<p><img src="/images/process_switching.png"></p>
+
+<ol>
+<li>数据进入接口之后,会把数据包传入IO的内存部分(此处的IO memory就是之前上面提到的比较块的SRAM内存.但是上一章上面的内存图中IO memory显示为DRAM,而书中内容提到大多数情况IO memory是使用SRAM.前后矛盾,不过没必要研究这么仔细.大体来看就是数据包进入了)</li>
+<li>接口会发一个中断请求给CPU,告诉那里有包处理.CPU会检查包信息,然后应该会把包放在合适的queue当中.这里就应该指的是我们之前提到的packet buffer的queue.</li>
+<li>这个时候会通知ip_input进程去跑queue中的包,去做包处理</li>
+<li>这个时候才到了我们一般理解的包处理的过程,查看目的地址是否跟路由表有match,如果有,尝试得到下一跳的IP信息.再从ARP表中得到这个IP地址和MAC地址的对应.修改目的MAC地址.</li>
+<li>把数据包放到IO memory的outbound queue.</li>
+<li>把数据包从IO memory放传送到实际接口中.剩下就是接口的事情了.</li>
+<li>剩下就是接口通知CPU包已经到了接口,释放内存中空间.</li>
+</ol>
+
+
+<h2>Process switching的负载均衡</h2>
+
+<p>其实这样的转发方式最大的优势就是能实现包级别的负载均衡.因为CPU很容易在多条路由条目之间做轮询.有些路由协议(EIGRP)也可以根据权重做非等价负载均衡.</p>
+
+<p><img src="/images/process_traffic_share.png"></p>
+
+<p>稍微解释下这个图里面的意思.星标就是下个包会用的路由条目,traffic share count指的是不同条目之间的比例.比如这个图中,流量会1:2的比例转发到10.1.2.1和10.1.3.1上面.这样的确做的确能把流量完全分开,有一个可能的缺点就是这样的负载均衡会把到同一个目的地址的数据包发到不同的链路,导致最后数据包到目的地址的顺序会乱.</p>
+
+<h2>Process switching的缺点</h2>
+
+<p>其实process switching最大的缺点就是查表的太多.而且路由表由于最长匹配原则,是一定要查完的,而且还要递归查询.当网络大起来的时候,路由表也很长,这样使用CPU资源会影响到包的转发速度.</p>
+
+<p>另外一点就是影响内存数据传送时间.在某些平台上面,CPU不能直接访问IO内存区域.数据包要从IO内存刀其他内存空间,再转发出去的时候还要再把数据包复制回IO内存空间.想想这些就知道多浪费CPU资源.</p>
+
+<p>在我们讨论具体的更好的方法之前,我们先看下ip_input这个进程到底做了什么.</p>
+
+<ol>
+<li>目的地址是否可达.其实就是查询路由表</li>
+<li>出接口是谁.</li>
+<li>封装二层信息.大多时候是MAC地址.通过封装下一跳的MAC地址,一般查询ARP表.</li>
+</ol>
+
+
+<p>因为路由表和ARP表都很大.查询起来很耗费资源.如果能有一个可达表加上出接口和目的mac地址的表就能帮忙提高转发速度.这样在包收到在最开始CPU的收包的中断的时候简单查一个表就解决了,也减少了数据包在内存上面的copy.在iO内存也就完成了.</p>
+
+<h1>快速转发(cache)</h1>
+
+<p>cache其实就是计算机行业里面很常用的,把经常访问的东西先存起来的一种方法.在IOS里面其实缓存了可达地址,出接口和MAC地址.</p>
+
+<p><img src="/images/fast_switch.png"></p>
+
+<p>看这个图,你会发现CPU介入之后直接查询cache,得到结果然后转发.ip_input进程根本不在涉及当中.其他步骤差不多,不过这里注意,此处CPU只有最开始的一个中断就完成了所有的需要的操作.这也就是一次查询多次转发的概念. 而且这个cache当网络不是变化很大的时候比较有用.如果互联网骨干之类的地方.很多cache会不匹配,cache过期等等问题,反而更麻烦. 从show ip route cache verbose可以看到具体的cache信息.另外cache在实现的时候用了其他的数据结构来提高效率.</p>
+
+<h2>hash表和radix tree</h2>
+
+<p>开始快速转发的表是用hash表实现的(如果不知道hash表的人需要复习下数据结构了). 简单的说就是对着目的地址做XOR操作作为hash表的index, 其中存下一跳的MAC地址. 对于hash表的冲突问题, 就把多个条目存在一个index下面, 如果有冲突的情况, 再做一次查询操作就好. 由于是IP地址,所以输入是基本可以预知的,再做一次查询增加的时间复杂度也可以接受.</p>
+
+<p>在IOS 10.2之后(你没有看错,是10.2)实现方式从hash表变成了 radix tree. 具体radix tree,我也大概只知道是一个二叉树.单从查询上来看的话,时间复杂度应该hash表更有优势.但是具体radix tree总体的优势,我也没有再深入研究,经过一些搜索大概知道现在路由表一般都是用radix tree实现的. radix tree存储IP地址的方式就是把IP地址用二进制的方式然后把一样的byte组成树的左右孩子.具体还是看个例子.</p>
+
+<p><img src="/images/radix_tree.png"></p>
+
+<p>这个就是这个radix tree怎么用4位二进制来存2,7,10这三个数的.查询的时候会从根开始根据目的地址的二进制进行搜索,选择左孩子还是右孩子.最后找到结果.</p>
+
+<h2>fast cache对于路由的局限</h2>
+
+<p>由于cache的建立是想避免多余的查表的,也是没有子网掩码的.这里就不能像路由表那样查完整个表然后做最长匹配了.比如172.31.46.0/24,172.31.46.128/25,172.31.46.129/32 如果我们有这3个cache,目的地址是172.31.46.129.我们想一下就找到对应的cache.这就成为cache当中最大的问题. 简单但是不可能的方式就是都用给每个主机做32位的cache.</p>
+
+<p>IOS用了以下规则做cache.</p>
+
+<ol>
+<li>直连接口用32位做cache(因为直连,所以目的地址应该在LAN上面,应该是主机,所以用32位)</li>
+<li>多条等价路径,用32位做cache.(应该是防止一个目的地址走了不同的路径,最后包会乱序)</li>
+<li>超网主类有子网的.都用最长的前缀做cache</li>
+<li>主类没有子网,就用主类的.</li>
+</ol>
+
+
+<h2>维护cache</h2>
+
+<p>维护cache主要是指管理cache的老化,删除不再存在的cache.</p>
+
+<h3>去掉不存在的cache</h3>
+
+<p>这个比较麻烦在于路由表是递归查询的.但是cache只有递归查询的结果.如果中途递归查询的其中一步变了.你很难说cache是否还有效.所以简单的维护cache的方式就是直接把cache删除,让他重新做一次查询形成cache.很多情况都会触发cache的删除,比如说这个条目的下一跳变了或者这个路由条目更新了,下一跳的ARP超时了等等.</p>
+
+<h3>cache老化</h3>
+
+<p>这里说的cache的老化其实是为了省一些内存空间.简单的说就是内存空间越小,他就随机去老化一些cache条目.</p>
+
+<h2>Fast switch的负载均衡</h2>
+
+<p>fast switch是不可能像process switch做每个包的负载均衡,原因就是因为路由层面和转发层面其实已经开始分离.</p>
+
+<p><img src="/images/fast_switching_balancing.png"></p>
+
+<p>你可以想象到如果多个client给server发连接的话,由于A上面cache的存在,A只会选取AB之间的一条链路使用,另外一条完全空闲出来.如果有多个server的话,单个server肯定选的是一条路.多个之间倒是有一定概率负载均衡下.如果反过来看,server回到client的traffic,还有可能选择那条空闲的,你可以说这样反而负载了一部分,然而这样也造成来回的路由不对称.</p>
+
+<h1>optimum switching</h1>
+
+<p>其实这个很不出名,基本就是对于cache的一点数据结构的优化.Radix tree是个很通用的二叉树,然而IP地址这样的结构固定的玩意,可以用更适合这种结构的数据结构来优化执行效率.这个优化其实就是把一个二叉树变成一个256叉树(mtree).因为IP地址的8个字节就是256bit. 大概就这个样子了.</p>
+
+<p><img src="/images/optimum_switch.png"></p>
+
+<h1>CEF</h1>
+
+<p>这本书的时候CEF还是最新的科技.克服了各种缺点,开始就是在各种复杂的大环境中做的测试.12.0之后CEF才是默认的转发模式.还只对某些设备才有.</p>
+
+<p>CEF是直接镜像了路由表和mac表,然后建立了两个表. CEF表和adjacency表.CEF表的实现方式跟optimum switch里面的mtree一模一样.不同的地方在于做cache的时候,里面直接存了下一跳的MAC地址.这里只存了一个指针,指向了adjancency表中的真实转发信息(下一跳,出接口,下一跳的二层地址信息)</p>
+
+<p>通过show adjacency table可以看到出接口直连的相关信息(在以太网中就是IP地址).邻接表中还会有不同的条目类型,例如直连有做过了ARP,有MAC地址,没有MAC地址等等.</p>
+
+<h2>CEF的优势</h2>
+
+<p>CEF其实跟Fast switch还是有类似的之处的.CEF其实最大的优点就是在最开始就提前建好这些内容.省去了cache第一次查询的时间了.当路由表特别大的时候提前构建CEF表和adjacency表还是有很大优势的,这样省去了转发时候构造cache的时间.这两个表在结构上面是独立的.所以不用像原来那样老化这个表.只要独立维护就好.</p>
+
+<h2>CEF的负载均衡</h2>
+
+<p>CEF的负载均衡可以是根据选择根据源目地址或者包级别的负载均衡,而且CEF也克服了之前提到过的单一目的地址负载不均衡的问题.解决方法其实就是在CEF表中找到条目的时候,再用数据包中的源目地址做一定操作,例如XOR之类的,映射到多条路径中的一条.这样当源目地址发生变化的时候,就有一定可能负载均衡了.但是这个负载均衡也只是概率上面的.当条目少,流量不够复杂的时候,是有机会出现散列不够好的情况.</p>
+
+<h2>数据包转发过程</h2>
+
+<p>这里列出来了数据包在设备中的从收到数据包到转发出去整个过程的主要步骤</p>
+
+<ol>
+<li>压缩或者解压</li>
+<li>加密(这步我不是很明白,收了一个数据包不应该是解密么,我估计是书上的笔误?)</li>
+<li>入向ACL</li>
+<li>URPF校验(不知道的可以搜下)</li>
+<li>入向的限速</li>
+<li>如果是个广播包的话,handle一下(比如DHCP里面的 helper address)</li>
+<li>TTL减一</li>
+<li>高级检测(例如防火墙feature)</li>
+<li>outside到inside方向的NAT</li>
+<li>处理IP header里面的某些flag</li>
+<li>找出接口</li>
+<li>找到关于这个包的策略路由</li>
+<li>web cache 重定向</li>
+<li>inside to outside NAT</li>
+<li>加密</li>
+<li>出向ACL</li>
+<li>再做一个高级防火墙检测</li>
+<li>TCP相关检测防止DDOS</li>
+</ol>
+
+
+<p>这个列表我在做troubleshoot的时候自己翻看很多次,还算比较有用.</p>
+
+<h1>总结</h1>
+
+<p>其实从这一章的四个转发模式中你可以看到现在大家天天见到的CEF是一步步如何进化而来的.其中用了什么样的机制克服了当年的什么样的弱点.有兴趣深究的同学可以研究下mtree, radix tree和hash表在选取上面的优劣和他们在做一些基本操作上面的时间复杂度的区别.</p>
+
+    
+    
+  </article>
+</section>
+<div class="categories">
+  
+
+
+
+
+  
+</div>
+<div id="disqus_thread"></div>
+<script type="text/javascript">
+  var disqus_shortname = 'caibitim-github-com';
+  (function() {
+  var dsq = document.createElement('script');
+  dsq.type = 'text/javascript';
+  dsq.async = true;
+  dsq.src = '//' + disqus_shortname + '.disqus.com/embed.js';
+  (document.getElementsByTagName('head')[0] || document.getElementsByTagName('body')[0]).appendChild(dsq);
+  })();
+</script>
+
+    <footer>
+  Tim <!--[if lte IE 8]><span style="filter: FlipH; -ms-filter: "FlipH"; display: inline-block;"><![endif]--><span style="-moz-transform: scaleX(-1); -o-transform: scaleX(-1); -webkit-transform: scaleX(-1); transform: scaleX(-1); display: inline-block;">©</span><!--[if lte IE 8]></span><![endif]--> 2017 — Your Name
+  <address>
+  </address>
+</footer>
+
+  </body>
+</html>

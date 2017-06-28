@@ -1,0 +1,101 @@
+
+<!doctype html>
+<html>
+  <head>
+  <meta charset="utf-8">
+  <meta content="" name="description">
+  <meta content="Your Name" name="author">
+  <title>Inside Cisco IOS Software Architecture(第四章,早期Cbus路由器架构) — My Octopress Blog</title>
+  <link href="/favicon.png" rel="icon">
+  <link href="/stylesheets/default.css" rel="stylesheet">
+  <link href="/atom.xml" rel="alternate" title="My Octopress Blog" type="application/atom+xml">
+  <link href="/stylesheets/syntax.css" type="text/css" rel="stylesheet" />
+</head>
+  <body>
+    <header>
+      <nav>
+        <h3>
+          <a href="/blog/archives">主页</a>
+          <a href="/about">关于我</a>
+        </h3>
+      </nav>
+    </header>
+    <section>
+  <header>
+    <time datetime="2016-11-23T21:51:19-05:00">23.11.2016</time>
+    <h1><a href="/blog/2016/11/23/inside-cisco-ios-software-architecture-4th/">Inside Cisco IOS Software Architecture(第四章,早期Cbus路由器架构)</a></h1>
+  </header>
+  <article>
+    <p>这一章主要讲Cbus架构的路由器,其中书中提到了AGS,AGS+还有7000系列.其实已经退休了20年了,不过我们可以从这种路由器看到一些现在路由器的架构的雏形.
+其中也会讲到数据包的转发过程.过于细节的东西就不会再提到了,因为实在没有太大意义.</p>
+
+<h1>AGS+ 路由器物理架构</h1>
+
+<p>AGS+和7000系列都是这个架构下的.与之前的shared memory的路由器不同的在于他们用了Cbus,其实就是总线.在Cisco用总线的时候,其实个人电脑还是没有总线的.</p>
+
+<p>在这个Cbus总线架构下,设计的目的就是包的转发尽量少让CPU参与转发. 所以Cubs架构下,有了一个自己的CPU和自己的内存区域.这一块统称为Cbus controller.由于这个CPU是单独用于转发的,在指令集上面可以做很多针对于转发的优化,内存也可以选取性能更高的来优化转发速度.</p>
+
+<p>下图就是Cbus架构.你可能会注意到还有个multibus.这个应该是主板不同结构通用的bus.这里还显示出来应该是因为AGS+当时为了向前兼容一些老的线卡所致.在后面讲的cisco 7000路由器系列中,转发就只有cbus了.而在AGS+这种路由器情况下,如果出接口是multibus上面的线卡.数据包就会在走一遍multibus.</p>
+
+<p><img src="/images/Cbus_architecture.png"></p>
+
+<h1>Cbus下数据包的转发</h1>
+
+<p>我们之前讲到过转发,不论是那种转发方式,都是在把数据包放在内存之后,都会给CPU一个中断,CPU来做包转发,区别只是CPU要根据CEF,cache,或者自己根据路由表做转发.但是CPU其实还是有很多时候要处理别的事情的.</p>
+
+<p>在Cbus架构中,只要数据包能在Cbus接口收到就好.这样Cbus的CPU就能自住处理.这样的转发方式叫做autonomous switching</p>
+
+<h2>autonomous switching</h2>
+
+<p>autonomous switching其实转发和快速转发差不多.基本上唯一的区别就是不同处理器而已.甚至在10.2IOS之前,autonomous switching也用hash表来实现的.</p>
+
+<p>比较大的区别就是autonomous switching就是没有支持那么多协议,比如只支持IP IPX.</p>
+
+<p>还有就是如果autonomous switching如果没有cache的话,他就会让CPU来处理,来尝试做fast switching甚至process switching.</p>
+
+<h2>Cbus的转发的内存</h2>
+
+<p>由于Cbus的接口只能到Cbus的总线,所以Cbus接口是不可能直接轻松访问到CPU的内存部分的.所以Cbus架构下有自己的内存区域.简称MEMD,其实就是SRAM.他和系统内存一样,根据不同的MTU来划分出来不同的buffer.</p>
+
+<p>在Cbus的内存中也区分receive queue和transmit queue. 和CPU内存中的queue类似, 数据包也是从网卡复制到Cbus的内存,如果数据包可以被Cbus的CPU处理, 就直接在Cbus上面分到transmit queue 再到具体的接口. 如果需要fast switching和process switching,就会被转发到multibus的CPU上面来做处理. Cbus这个CPU也会决定接口的速度和记录一些转发的基础数据.其实在这里你可能会意识到,从Cbus这类路由器,转发和控制开始分离,这个所谓的cbus就是转发引擎的雏形.</p>
+
+<h1>Cisco 7000</h1>
+
+<p>Cisco 7000是代替AGS,AGS+系列路由器的,还干掉了所有用multibus的接口.换句话说所有接口都是连接到Cbus上面.</p>
+
+<p>原来的控制CPU就是大家现在熟悉的RP,就是路由引擎.没有了原来又转发又传送控制信令的multibus, 在路由引擎和转发引擎有一个另外的bus.</p>
+
+<p>Cbus controller也正式改名叫SP,也就是交换引擎.其他没太多实际变化.</p>
+
+    
+    
+  </article>
+</section>
+<div class="categories">
+  
+
+
+
+
+  
+</div>
+<div id="disqus_thread"></div>
+<script type="text/javascript">
+  var disqus_shortname = 'caibitim-github-com';
+  (function() {
+  var dsq = document.createElement('script');
+  dsq.type = 'text/javascript';
+  dsq.async = true;
+  dsq.src = '//' + disqus_shortname + '.disqus.com/embed.js';
+  (document.getElementsByTagName('head')[0] || document.getElementsByTagName('body')[0]).appendChild(dsq);
+  })();
+</script>
+
+    <footer>
+  Tim <!--[if lte IE 8]><span style="filter: FlipH; -ms-filter: "FlipH"; display: inline-block;"><![endif]--><span style="-moz-transform: scaleX(-1); -o-transform: scaleX(-1); -webkit-transform: scaleX(-1); transform: scaleX(-1); display: inline-block;">©</span><!--[if lte IE 8]></span><![endif]--> 2017 — Your Name
+  <address>
+  </address>
+</footer>
+
+  </body>
+</html>

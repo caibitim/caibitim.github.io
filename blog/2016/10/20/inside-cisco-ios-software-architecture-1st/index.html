@@ -1,0 +1,197 @@
+
+<!doctype html>
+<html>
+  <head>
+  <meta charset="utf-8">
+  <meta content="" name="description">
+  <meta content="Your Name" name="author">
+  <title>Inside Cisco IOS Software Architecture(第一章,系统基础知识) — My Octopress Blog</title>
+  <link href="/favicon.png" rel="icon">
+  <link href="/stylesheets/default.css" rel="stylesheet">
+  <link href="/atom.xml" rel="alternate" title="My Octopress Blog" type="application/atom+xml">
+  <link href="/stylesheets/syntax.css" type="text/css" rel="stylesheet" />
+</head>
+  <body>
+    <header>
+      <nav>
+        <h3>
+          <a href="/blog/archives">主页</a>
+          <a href="/about">关于我</a>
+        </h3>
+      </nav>
+    </header>
+    <section>
+  <header>
+    <time datetime="2016-10-20T22:22:09-04:00">20.10.2016</time>
+    <h1><a href="/blog/2016/10/20/inside-cisco-ios-software-architecture-1st/">Inside Cisco IOS Software Architecture(第一章,系统基础知识)</a></h1>
+  </header>
+  <article>
+    <p>由于本书写于1990年代,CEF还是cisco最新的黑科技. 所以其中很多关于操作系统的内容已经不太正确.Cisco的操作系统也从最开始的IOS一种形式到后来的linux做control plane的IOS,IOS-XR,IOS-XE,NX-OS 等等等. 我相信书中提到的很多玩意已经不再使用,或者起码有所变化,但是由于没有更新的版本的书讲新的操作系统的内部,所以还是只能从这本书上了解.从学习的角度来看,从一个比较原始的形态学习也有助于一步步理解更复杂的系统. 所以不要过分纠结书的年代和细节内容.</p>
+
+<h1>操作系统</h1>
+
+<p>首先书中复习了下大学操作系统的基本概念,操作系统本质是用来抽象硬件和做资源分配的.</p>
+
+<p>由于要讲CPU的资源分配,继续复习了大学操作系统中的线程,进程,内核的概念.根据CPU分配资源的情况排队策略不同,分类为FIFO,有优先级的FIFO,可抢占的多任务系统.各种不同排队策略的优劣势大概大家可以想出来,比如实时性无法满足,霸占CPU资源，切换的多了又会出现因为CPU要不停的切换现场带来的资源浪费等等一堆废话,有兴趣的可以复习下大学课本.</p>
+
+<p>除了CPU资源,另外一个很重要的资源就是内存了. 再次帮你复习一下什么是操作系统分配的内存和虚拟内存.然后画风一转,说了一句大废话.IOS系统由于为了保证性能,所以没有完全实现虚拟内存.</p>
+
+<h1>IOS操作系统</h1>
+
+<p>IOS系统历史久远,那个时代大家为了省系统资源基本什么事情都做的出来. 更何况IOS这种系统开始只是为了转发,后来功能是越加越多.所以缺失了一些其他操作系统最基本的功能,比如进程之间连内存的保护都没有.</p>
+
+<p><img src="/images/IOS架构.png"></p>
+
+<p>从图上你可以看到系统中的几部分,很有意思的是他不像日常我们现在接触的linux,区分用户态和内核态.看上去更像是一堆功能堆在一起的,我一直以为路由的计算等等功能应该是在用户态实现之后然后通过类似于system call的东西传送给内核态,但是从这个图来看早起的IOS来看应该是根本没有的.</p>
+
+<p>名字就代表了基本功能,还算明显,process应该对应到设备上面应该就是所谓的主控卡所执行的大多数任务.packet buffer就是接口收到所有要转发的包的集合,需要注意的是一些网工(其实就是我)会思考硬件上面的具体某个东西(比如queue)来和这个对应.但是从操作系统的角度来看,永远是CPU和内存在交换数据,所谓的硬件queue之类的东西在这个图里面其实是在device driver层面的东西. 内核就是更多操作系统的基本功能了,CPU和内存资源的调度. 快速转发这一块,下一章再说.</p>
+
+<h2>内存</h2>
+
+<p>内存这一块,IOS基本没有用虚拟内存来扩充内存空间.所以他对内存的使用上面也是直接使用,没有抽象成传统操作的内存页再提供给应用程序.这样目的应该还是为了省出来一些内存资源.</p>
+
+<p>IOS把内存区分不同的区域,称为regions. 这个regions基本就和物理内存是一一对应的关系.其中的DRAM基本就是用来做日常我们接触到的功能,比如用来跑IOS,留给进程存取变量之类的.SRAM是用来做packet buffer做快速转发. (由于大学操作系统也没有学的很好,还是搜了下DRAM和SRAM的区别,简单可以理解为DRAM便宜,SRAM贵,SRAM比较块.)</p>
+
+<p>现在在IOS的路由器上面还是可以用show region命令看到具体IOS的内存分配情况.</p>
+
+<p>这个图就是内存region的划分.</p>
+
+<p><img src="/images/IOS内存区域.png"></p>
+
+<p>你真的特别想搞明白具体是干嘛的.我推荐你复习下大学操作系统的课本.简单的可以理解是main里面跑了IOS和IOS运行起来需要的动态的内存空间.PCI和IO就是PCI总线上面和IO设备要用的内存空间.从整个内存的角度大概是这么个情况.</p>
+
+<p>但是一般我们会用到一个show memory的命令,看IOS内存空间使用情况.这个命令就是具体更具体的显示了每一部分内存的使用情况,不过这个命令的输出真的很长.</p>
+
+<h2>进程</h2>
+
+<p>IOS其实是用了一个非抢占的调度CPU的模式.看上去有点蠢,因为网络设备本质是要快速处理来的包,如果不能抢占,包来了你的CPU不能及时转发.这是个非常傻X的事情.我们会在第二章讲包交换架构的时候提到这个事情是怎么解决的. 非抢占的优势还是有的,CPU不用来回保存现场切换来去,效率高了一点,其次对程序员来说编程容易.(这段基本纯翻译,看到最后一句的时候我都惊呆了&hellip;.)</p>
+
+<h3>进程的一生</h3>
+
+<p>其实在IOS里面有一个paser进程,基本负责了大多数创建.paser进程就是在你敲完命令之后分析配置文件,然后根据配置文件做相关的事情.比如你刚敲了router eigrp.他就起了个eigrp进程.你no掉这个eigrp进程的时候,这个parser就会干掉这个进程.</p>
+
+<p><img src="/images/IOS进程.png"></p>
+
+<p>图其实已经比较清楚简单的解释了一个进程的一生,其中modification这个状态应该指的是说这个进程创建的时候需要的一些参数,我可以想象到的就是比如你在配置OSPF的时候router id这些参数是这在这个状态被添加到进程当中的,当然这是我的理解,可能完全是错的.</p>
+
+<p>show process这个命令可以看到具体进程的具体信息. IOS当中进程的优先级分4个,Critical,High,Medium,Low.</p>
+
+<ul>
+<li>Ciritical: 主要是系统必须要用的基础服务</li>
+<li>High: 重要的必须要快速响应的.比如端口收到了一个包</li>
+<li>Medium: 大多数系统进程都在这.比如我们用的路由协议</li>
+<li>Low: 最不重要的,比如log</li>
+</ul>
+
+
+<p>对于show process更细致的解释,请自行搜索.或者参见inside Cisco IOS software architecture的相关内容.</p>
+
+<h2>CPU资源管理</h2>
+
+<p>在内核当中用来分配CPU资源的就是scheduler, 所有的进程被分配到6个queue当中.6个queue分为三个大类.
+- idle queue: 空闲的queue,等待别的事件让他active
+- dead queue: 进程结束了,但是内存相关资源还没有被操作系统回收
+- ready queue:
+  -  Critical</p>
+
+<ul>
+<li><p> High</p></li>
+<li><p> medium</p></li>
+<li><p> low</p></li>
+</ul>
+
+
+<p>分配资源算法简单说起来就是在每执行一个进程之后,都要去看有没有优先级更高的进程应该被执行用来. 如果有,一定保证优先级更好的进程被执行.</p>
+
+<p>通过show process cpu可以看到CPU的使用情况</p>
+
+<p><img src="/images/IOS_CPU.png"></p>
+
+<p>其中图中的百分之90和百分之82表示了前五秒CPU的被进程的总消耗和其中具体处理中断的消耗,这里百分之8的差值主要指的是相互进程之间切换导致的损耗.最后剩下的百分之10,就是scheduler本身所消耗掉的CPU资源.</p>
+
+<p>我们之前提到过IOS是通过一个非抢占的方式分配CPU资源,这样就有一个很常见的问题.一个资源如果霸占着CPU不放手,那要怎么办. 在IOS当中有个玩意叫watchdog timer来解决这个问题. 工作原理就是一个进程启动之后,开始对这个进程计时,当过了2秒之后,这个进程还是占着CPU资源.他就把CPU的控制权还给scheduler,如果scheduler还是把CPU给这个程序,而且这个资源继续霸占CPU2秒.这个进程就会被干掉.</p>
+
+<h2>内存资源管理</h2>
+
+<p>这里就是之前提到过的region manager把物理内存划分成不同的region. pool manager就是分配动态是内存资源.系统最开始启动的时候是一块大的内存资源,当不同进程申请释放之后.内存块就会变得多个小块,pool manager就是尽量保证释放后的内存能有尽量大单块资源. show memory和show memory free可以看到具体进程使用内存的情况.</p>
+
+<p>pool manager有一个缺点就是每个管理的block都有一个32byte的overhead,当内存block很大的时候,这点overhead无所谓.当有多个小block的时候,这个overhead就很要命了.这里IOS就有一个chunk manager来解决这个问题. chunk manager其实就是把一个大的block分成N个大小固定的chunk,当进程申请内存的时候,chunk manager就会把几个chunk给这个进程.这个chunk manager整个block才有一个32byte的overhead.所以比pool manager每个block多一个32byte的overhead省了不少内存空间.</p>
+
+<h3>内存分配问题</h3>
+
+<p>之前都提到的都是分配成功的.内存也有分配不成功的时候,主要有两个原因.一个就是内存空间不够了.还有一种可能就是内存空间虽然够,但是最大的block不满足进程的需求. show memory可以看到当前最大的内存block是多少.如果有进程需求比这个block要大,就会导致进程无法创建.</p>
+
+<h1>Packet Buffer 管理</h1>
+
+<p>IOS系统会在内存创建一块区域专门存放要转发的数据包.在IOS系统内部管理packet buffer的是buffer pool manager.</p>
+
+<p>IOS系统当中通过packet buffer manager会创建不同种类的packet buffer pool,其实这个pool也就是一块内存区域.它根据不同的类型可能是静态的,动态的.所有进程都可以访问的,或者是某个进程才能访问的.</p>
+
+<h2>系统Buffer</h2>
+
+<p>IOS操作系统有一个公共的buffer叫系统buffer.这个buffer就是用来处理收到的数据包,也存放设备自己产生的数据包.通过show buffer命令可以看到具体的信息.</p>
+
+<p>系统buffer会根据MTU的不同,又分为不同的队列(具体这样处理是不是比较快,我也不能确定,可能是因为CPU处理固定长度的会有很大的优势,起码直接根据长度直接提取出相应的字节). 具体show出来的内容解释就需要参考书了.</p>
+
+<p>一个简单的例子说明下buffer的工作原理.</p>
+
+<p><img src="/images/系统buffer.png"></p>
+
+<p>这是一个初始状态的用来放104byte包大小的buffer.</p>
+
+<p>在前8个包进入buffer的时候只会简单的占用8个,剩下8个.此时请注意,剩下的buffer数量已经等于min buffer的大小.此时,如果还有包进入buffer.系统会尝试保持最小buffer,换句话说,如果这个时候进来了4个包,也就是一共12个包进入buffer.这时buffer会从16涨到20.请注意,这里并非无限增长的.如果继续有包进入buffer,buffer就会停止涨下去.多余的包就会被丢弃.(这里为什么是从16涨到20,书上也并非说的特别清楚,只是举例说show出来buffer不同的状态.根据我的猜测,应该是在一个时间间隔内尝试满足buffer的需求,即使这样,应该会也有个上限.书中完全没有提到,在次我们只能做大概了解)</p>
+
+<p>最终状态的buffer样子:</p>
+
+<p><img src="/images/系统buffer最后.png"></p>
+
+<p>其中可以看到此时buffer大小其实是20,永久buffer是16,最后会释放多余的内存空间.20 hits指的就是最后buffer能接受数据包的数量.13 miss这个计数器是当buffer小于min buffer的时候他就会增长.4 created就是动态新建了4个buffer.最后有一个包被丢弃标示为1 failure. 如果觉得此处解释的不清楚.请参考书上例子,有图解.</p>
+
+<h1>设备驱动</h1>
+
+<p>毋庸置疑,所有硬件设备都需要驱动.IOS也不例外,不过值得一提的就是IOS网卡驱动分为两大块.一个是控制部分,比如shut down端口.另外一部分是流量转发.第二章会讲到网卡驱动会和包转发紧密联系在一起.</p>
+
+<p>IOS的驱动通过非常特殊的方式(interface descriptor block)和其他部分沟通(我也不知道一般操作系统通过什么方式). IDB里面存储了接口的IP地址,接口状态,接口相关统计等等等.</p>
+
+<h1>总结</h1>
+
+<p>IOS操作系统其实和其他操作系统区别不大,只有两个是需要很注意的,内存资源有限,对于转发的要求.(我相信现在对于内存的要求变化差距应该很大了,曾经是很缺内存,现在情况并非这样了).</p>
+
+<p>其中IOS比较奇葩的就是把内存平铺起来,所有进程随便用.此处注意,IOS进程相当于别的系统的线程(可能是由于内存可以随便访问所以才这么说?当年也没有多核CPU啊).</p>
+
+<p>IOS不像其他操作系统的一点还有就是根本没有user mode或者说是kernel就跑在user mode下面和其他进程共享内存资源.</p>
+
+<p>下一章,我们讲述IOS系统的转发.</p>
+
+    
+    
+  </article>
+</section>
+<div class="categories">
+  
+
+
+
+
+  
+</div>
+<div id="disqus_thread"></div>
+<script type="text/javascript">
+  var disqus_shortname = 'caibitim-github-com';
+  (function() {
+  var dsq = document.createElement('script');
+  dsq.type = 'text/javascript';
+  dsq.async = true;
+  dsq.src = '//' + disqus_shortname + '.disqus.com/embed.js';
+  (document.getElementsByTagName('head')[0] || document.getElementsByTagName('body')[0]).appendChild(dsq);
+  })();
+</script>
+
+    <footer>
+  Tim <!--[if lte IE 8]><span style="filter: FlipH; -ms-filter: "FlipH"; display: inline-block;"><![endif]--><span style="-moz-transform: scaleX(-1); -o-transform: scaleX(-1); -webkit-transform: scaleX(-1); transform: scaleX(-1); display: inline-block;">©</span><!--[if lte IE 8]></span><![endif]--> 2017 — Your Name
+  <address>
+  </address>
+</footer>
+
+  </body>
+</html>

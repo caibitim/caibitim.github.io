@@ -1,0 +1,164 @@
+
+<!doctype html>
+<html>
+  <head>
+  <meta charset="utf-8">
+  <meta content="" name="description">
+  <meta content="Your Name" name="author">
+  <title>Inside Cisco IOS Software Architecture(第七章,12000系列路由器) — My Octopress Blog</title>
+  <link href="/favicon.png" rel="icon">
+  <link href="/stylesheets/default.css" rel="stylesheet">
+  <link href="/atom.xml" rel="alternate" title="My Octopress Blog" type="application/atom+xml">
+  <link href="/stylesheets/syntax.css" type="text/css" rel="stylesheet" />
+</head>
+  <body>
+    <header>
+      <nav>
+        <h3>
+          <a href="/blog/archives">主页</a>
+          <a href="/about">关于我</a>
+        </h3>
+      </nav>
+    </header>
+    <section>
+  <header>
+    <time datetime="2017-03-22T23:02:19-04:00">22.03.2017</time>
+    <h1><a href="/blog/2017/03/22/inside-cisco-ios-software-architecture-7th/">Inside Cisco IOS Software Architecture(第七章,12000系列路由器)</a></h1>
+  </header>
+  <article>
+    <p>这一章主要讲12000系列路由器,在此我们可以看到现代高端路由器的架构的样子.我们只是通过某个系列来了解这个类型的路由器的架构,所以关于平台的细节,我们可能就略过不再多说.</p>
+
+<h1>硬件架构</h1>
+
+<p><img src="/images/12000_hardware.png"></p>
+
+<p>这里你可以看到几个最重要的部分</p>
+
+<ul>
+<li>switching fabric(交换矩阵)</li>
+<li>Mbus(不太重要的总线)</li>
+<li>route processor(主控卡)</li>
+<li>line cards(线卡)</li>
+</ul>
+
+
+<h2>交换矩阵</h2>
+
+<p>之前我们所有讲的架构其实都是整个系统有一个总线.他的缺点其实很明显,他总是要等到bus上面可以传输的时候,自己才传输.而且他还总是要传输到RSP的MEMD区域然后决定最后这个包要去哪.这两个问题是这种bus架构与生俱来的,再快的bus也无法解决这种问题.</p>
+
+<p>12000架构路由器就利用的是crossbar的交换矩阵来作为背板,从而做转发.如图你可以看到转发成为一个矩阵,这样的情况下.数据包可以通过交换矩阵直接从一个线卡到另外一个线卡.</p>
+
+<p><img src="/images/cross_bar.png"></p>
+
+<p>讲一下交换矩阵, 上图就表示了一个交换矩阵的示意图,可以看到任何两个LC(线卡)之间都有交点,这便是线卡之间的通道.</p>
+
+<p>关于交换矩阵,我们在这要提出几个基本概念: 交换矩阵, 交换平面,交换卡.</p>
+
+<h3>交换矩阵, 交换平面</h3>
+
+<p>交换矩阵和交换平面实际是都是逻辑概念. 一个交换矩阵是由多个交换平面组成的.</p>
+
+<p><img src="/images/switch_fabric.png"></p>
+
+<p>这个图是我从弯曲评论讲CRS设备的博客上面盗来的. 这个图你可以清楚的看到,每个线卡都是连接fabric plane. 这个fabric plane便是交换平面.可以注意到的是其实每个线卡都连接了所有的交换平面.</p>
+
+<h3>交换卡</h3>
+
+<p>之前提到的都是逻辑概念,这个才是实际中见到的交换卡.有时候一个交换卡里面有一个交换平面,一个交换卡里面也可以有多个交换平面.这个完全看硬件的实现情况.</p>
+
+<h3>Cisco Cells</h3>
+
+<p>很有意思的是当数据包从线卡进入多个交换平面的时候,数据包并不是选择某一个交换平面来传输数据包,是把一个数据包再分割成多个cell分散到多个交换平面,来负载多个交换平面,当数据包到达某个线卡的时候,再次把多个cell组装成一个数据包. 具体这么做的原因我也不是很明白,可能涉及到更深层次的交换矩阵的实现, 因为如果负载交换平面也可以直接让数据包在多个交换平面之前做round robin来实现.</p>
+
+<h2>maintenance bus</h2>
+
+<p>这个就是用来维护系统的,比如启动的时候收集各个line card的信息,实际的数据信息是永远不会走这个bus的.</p>
+
+<h2>CPU</h2>
+
+<p>和之前说的类似,主要就是做实际的计算,然后把计算结果发送到各个线卡上面.具体的CPU, DRAM,SRAM和之前的路由器没有什么分别.</p>
+
+<h2>Line card</h2>
+
+<p>之前提到过,到了这个级别的路由器,实际设备已经是通过线卡自己就完成了转发.所以线卡大概有这三个部分构成</p>
+
+<ol>
+<li>physical layer interface module: 用来终结实际的物理口(可能是以太,ATM,POS)</li>
+<li>Switch fabric interface: 和交换矩阵连接的部分</li>
+<li>Packet forwarding engine: 转发引擎.</li>
+</ol>
+
+
+<p>书中这里提到了具体12000系列不同代的引擎. 我们在此就不在多叙述.大概讲下其中不同的部分.简单来说线卡在设计上面是基本就是复制之前主控板的设计就基本OK的.CPU,DRAM和SRAM.只是后来线卡的实现的时候引入了ASIC芯片.这样在数据实际数据包的时候就利用了ASIC芯片,而非线卡上面的CPU.这样提高了转发效率. 在此你可以看到CPU的设计又再次分离.</p>
+
+<h2>数据包转发</h2>
+
+<p>在12000系列中,大多数数据包的转发都是通过线卡就转发走了.只是控制信令的数据包会被送到主控卡做数据交互.</p>
+
+<p>由于线卡架构不同,有ASIC和没有ASIC的转发也会有所差距,这里我们尽量统一.</p>
+
+<ol>
+<li>物理硬件检测到有数据包到了接口,会把数据包先放进一个FIFO的内存空间中(这是之前系统没有的),在12000中叫burst memory.</li>
+<li><p>从receiving ring里面找到一块内存空间,把数据包从burst memory复制到另外一个内存空间,然后等待CPU处理 (这个地方12000有他自己的名字,比如管理receiving ring和transit ring的叫buffer management ASIC).</p></li>
+<li><p>给CPU发中断请求,查询CEF表.</p>
+
+<ul>
+<li>如果CEF表里面有,就在线卡上面直接改写,然后准备转发出去</li>
+<li>如果不在CEF表中,直接丢弃.</li>
+<li>控制信令包,转发到主控卡</li>
+</ul>
+</li>
+<li>把数据包切成64bytes的cell,发送到交换矩阵里面.</li>
+</ol>
+
+
+<p>如果有ASIC 芯片 不同之处如下:</p>
+
+<ol>
+<li>没有区别</li>
+<li>如果这个线卡是有ASIC芯片的,这个时候就直接读数据包的包头(前64bytes),就直接从burst memory复制到了ASIC CPU处理的内存区域.</li>
+<li>ASIC芯片通过查找ASIC内存区域的CEF表来判断是否可以转发包.如果可以转发,就把数据包改写,然后通过receiving ring管理机制把数据包,把数据包切成64bytes,发送到交换矩阵.(这个过程没有给线卡CPU发送中断请求)</li>
+<li>如果ASIC不能处理,就会走按之前说的方式中断CPU来转发数据包</li>
+<li>trasmit ring把找到一块内存把cell重新组装成数据包.</li>
+<li>最后就是数据包先从trasmit ring的内存空间到最后的物理接口.</li>
+</ol>
+
+
+<p>转发的细节流程图书上有更详细的解释.</p>
+
+<h1>Summary</h1>
+
+<p>这一章主要通过12000系列讲一下高级的路由器内部架构.可以发现看到现在高级路由器的架构,线卡,线卡直接转发,交换矩阵.单独的ASIC芯片处理数据包.看上去20年前的架构和现在的没有很大差别了.</p>
+
+    
+    
+  </article>
+</section>
+<div class="categories">
+  
+
+
+
+
+  
+</div>
+<div id="disqus_thread"></div>
+<script type="text/javascript">
+  var disqus_shortname = 'caibitim-github-com';
+  (function() {
+  var dsq = document.createElement('script');
+  dsq.type = 'text/javascript';
+  dsq.async = true;
+  dsq.src = '//' + disqus_shortname + '.disqus.com/embed.js';
+  (document.getElementsByTagName('head')[0] || document.getElementsByTagName('body')[0]).appendChild(dsq);
+  })();
+</script>
+
+    <footer>
+  Tim <!--[if lte IE 8]><span style="filter: FlipH; -ms-filter: "FlipH"; display: inline-block;"><![endif]--><span style="-moz-transform: scaleX(-1); -o-transform: scaleX(-1); -webkit-transform: scaleX(-1); transform: scaleX(-1); display: inline-block;">©</span><!--[if lte IE 8]></span><![endif]--> 2017 — Your Name
+  <address>
+  </address>
+</footer>
+
+  </body>
+</html>

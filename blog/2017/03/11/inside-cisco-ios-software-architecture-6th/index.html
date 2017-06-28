@@ -1,0 +1,134 @@
+
+<!doctype html>
+<html>
+  <head>
+  <meta charset="utf-8">
+  <meta content="" name="description">
+  <meta content="Your Name" name="author">
+  <title>Inside Cisco IOS Software Architecture(第六章,7500硬件架构) — My Octopress Blog</title>
+  <link href="/favicon.png" rel="icon">
+  <link href="/stylesheets/default.css" rel="stylesheet">
+  <link href="/atom.xml" rel="alternate" title="My Octopress Blog" type="application/atom+xml">
+  <link href="/stylesheets/syntax.css" type="text/css" rel="stylesheet" />
+</head>
+  <body>
+    <header>
+      <nav>
+        <h3>
+          <a href="/blog/archives">主页</a>
+          <a href="/about">关于我</a>
+        </h3>
+      </nav>
+    </header>
+    <section>
+  <header>
+    <time datetime="2017-03-11T18:48:38-05:00">11.03.2017</time>
+    <h1><a href="/blog/2017/03/11/inside-cisco-ios-software-architecture-6th/">Inside Cisco IOS Software Architecture(第六章,7500硬件架构)</a></h1>
+  </header>
+  <article>
+    <p>这一章主要讲7500系列路由器,在这个书出版的时候7500应该还是一个Cisco很高级的路由器,是之前提到的AGS和7000系列的升级版.</p>
+
+<h1>7500路由器硬件架构</h1>
+
+<p>这个图可以看到7500系列的架构,可以注意的是他用了Cbus的架构,这里最大的区别也只是bus上面速度更快了.
+<img src="/images/7500_architecture.png"></p>
+
+<h2>Route Switch Processor</h2>
+
+<p>RSP就是之前所谓RP和SP一体转发的CPU.其实我也不是很能理解为啥会把SP和RP架构再次弄成一个RSP.可能在7500推出的时候CPU计算能力增强了,分布式的RP和SP之间还是有bus需要来交换数据,使用效率不是很高.不过这些都是猜测.</p>
+
+<h2>Route switch processor</h2>
+
+<p><img src="/images/route_switch_processor.png"></p>
+
+<p>图中可以看到这个处理器的架构.CPU在此做了路由和转发的决定.</p>
+
+<h3>MEMD</h3>
+
+<p>这个便是用来存放packet buffer的内存空间.根据数据包的MTU大小来创造packet的buffer.具体算法这块过于细节,大概说起来就是这块内存区域会根据接口的MTU划分出来sub pool,每个sub pool会存放一个MTU区间,比如说pool A里面的packet buffer是存放MTU在256和512之间的数据包.</p>
+
+<h3>Main Memory</h3>
+
+<p>这个里面就是操作系统需要用到的内存,跑IOS的内存和各种进程需要用的内存.图中IDB就是接口上面的相关信息,这个是很早第一章中的内容,不过我也已经完全忘了.</p>
+
+<h3>RSP 转发</h3>
+
+<ol>
+<li>接口收到数据包,接口上面有一个小处理器,会把数据包放入接口的内存当中</li>
+<li>接口处理器尝试把数据包放到MEMD区域. 尝试先放入一个local MEMD中,如果local MEMD满了,就会放入global MEMD当中.(这点和之前说的public pool以及private pool应该是一样). 如果global MEMD也满了,这样就会把这个包丢了.</li>
+<li>找到可以用的MEMD空间之后,把数据复制到MEMD里面</li>
+<li>MEMD把数据包放入RSP的queue等待处理</li>
+<li>此时会给CPU提一个中断.</li>
+<li>CPU开始根据设备的配置处理这个中断(走CEF或者是fast switching).我们这里讲的是每个包都会出发中断.现实当中,一个中断会处理buffer中的很多包</li>
+<li>CPU根据情况来处理这个包,CEF可以查到下一跳,就进入转发阶段.如果没有匹配到就会进入fast switching. fast switching如果还是没有匹配到的话,会触发process switching</li>
+<li>process开始处理包,这个时候,CPU需要把包从MEMD复制到system内存当中.如果由于system里面没有内存空间了,或者排队要process switching的包太多了, 这个包会被丢弃.当CPU可以正常处理这个包,并且可以在output queue中找到空间的时候,IOS就会把sytem memory的包复制回MEMD.</li>
+<li>IOS尝试会把MEMD的数据包放入接口的queue当中,如果queue满了,就放入系统的queue排队等待.</li>
+<li>接口的处理器会把MEMD上面的包复制到自己的内存上面.</li>
+<li>把数据包转发出去,然后清空自己的内存.(这块转发流程书中有详细的流程图)</li>
+</ol>
+
+
+<h2>VIP架构</h2>
+
+<h3>CPU</h3>
+
+<p>VIP(Verstiable Interface Processor)架构其实就是现在常见高端路由器上面的分布式架构,每个转发的板卡都有自己的转发系统.其实每个板卡上面的都独立运行着一个特殊版本的IOS,他会处理RSP同步过来的一些计算结果,也会直接改写下一跳的MAC地址,直接转发出去.</p>
+
+<h3>内存</h3>
+
+<p>这里也分给操作系统用的DRAM和处理包用的SRAM,只是不叫MEMD而已.</p>
+
+<h3>VIP架构下的转发</h3>
+
+<p>之前我们提到了分布式转发,其实就是线卡上面有一套同步于RSP的系统进行的转发, 我们再次看下在分布式系统下数据包的转发(流程图书中可以看到)</p>
+
+<ol>
+<li>接口检测到有数据包,会把数据包放到一个内存空间,这个就是接口的receive ring.</li>
+<li>接口会直接给VIP的CPU发一个中断,然后数据包会尝试的放入到板卡上面的SRAM中.</li>
+<li>如果可以用CEF,就直接通过CEF把数据包转发走. 如果不能通过板卡上面的CPU转发.将会通过cbus来把数据包转发到RSP上面.</li>
+<li>如果出接口是在这个板卡下面,在这个VIP架构下,数据包就会直接转发走,不会通过cbus.这样情况下,数据包就直接进入转发ring,然后转发出去.</li>
+<li>如果数据包出接口不在这个VIP架构之下.他就会尝试通过cbus把数据包转到RSP中的MEMD中,然后通过MEMD转到另外一个VIP架构下的出接口,但是这个过程RSP的CPU完全不用处理.</li>
+<li>最后把数据包转发出去,清空当时数据包占用的内存空间.</li>
+</ol>
+
+
+<h3>VIP架构下面的接收buffer</h3>
+
+<p>VIP架构下面,其实每个板卡上面的CPU和内存都相互独立,板卡的CPU是不可以访问其他VIP架构下面的内存空间.他们可以访问的只有自己的内存空间和RSP的MEMD.这个时候就会出现当他们想把数据包放入MEMD的时候,出现MEMD没有内存空间的情况. 如果MEMD没有空间,VIP就会暂时放入自己的内存空间.以保证数据包不会被丢弃.</p>
+
+<h1>Summary</h1>
+
+<p>主要就讲了下7500架构的系统,从前面几章到现在,其实可以看到硬件的架构和软件的架构是逐渐复杂的. 现在已经有了VIP架构和分布式转发,下一章我们会看到交换矩阵.</p>
+
+    
+    
+  </article>
+</section>
+<div class="categories">
+  
+
+
+
+
+  
+</div>
+<div id="disqus_thread"></div>
+<script type="text/javascript">
+  var disqus_shortname = 'caibitim-github-com';
+  (function() {
+  var dsq = document.createElement('script');
+  dsq.type = 'text/javascript';
+  dsq.async = true;
+  dsq.src = '//' + disqus_shortname + '.disqus.com/embed.js';
+  (document.getElementsByTagName('head')[0] || document.getElementsByTagName('body')[0]).appendChild(dsq);
+  })();
+</script>
+
+    <footer>
+  Tim <!--[if lte IE 8]><span style="filter: FlipH; -ms-filter: "FlipH"; display: inline-block;"><![endif]--><span style="-moz-transform: scaleX(-1); -o-transform: scaleX(-1); -webkit-transform: scaleX(-1); transform: scaleX(-1); display: inline-block;">©</span><!--[if lte IE 8]></span><![endif]--> 2017 — Your Name
+  <address>
+  </address>
+</footer>
+
+  </body>
+</html>

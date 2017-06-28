@@ -1,0 +1,120 @@
+
+<!doctype html>
+<html>
+  <head>
+  <meta charset="utf-8">
+  <meta content="" name="description">
+  <meta content="Your Name" name="author">
+  <title>Inside Cisco IOS Software Architecture(第五章,Particle-Based Systems) — My Octopress Blog</title>
+  <link href="/favicon.png" rel="icon">
+  <link href="/stylesheets/default.css" rel="stylesheet">
+  <link href="/atom.xml" rel="alternate" title="My Octopress Blog" type="application/atom+xml">
+  <link href="/stylesheets/syntax.css" type="text/css" rel="stylesheet" />
+</head>
+  <body>
+    <header>
+      <nav>
+        <h3>
+          <a href="/blog/archives">主页</a>
+          <a href="/about">关于我</a>
+        </h3>
+      </nav>
+    </header>
+    <section>
+  <header>
+    <time datetime="2017-03-06T22:49:22-05:00">06.03.2017</time>
+    <h1><a href="/blog/2017/03/06/inside-cisco-ios-software-architecture-5th/">Inside Cisco IOS Software Architecture(第五章,Particle-Based Systems)</a></h1>
+  </header>
+  <article>
+    <p>这一章主要讲particle based的系统和落后的7200系列路由器,具体设备相关的内容就大概说一下,毕竟过时很久了.</p>
+
+<p>particle based系统的主要优势就是更高效内存资源. 之前章节提到过,系统中的内存会划分成不同的区域给不同的MTU的数据包.这段内存区域是连续的,单个数据包占用的内存空间等于MTU的大小. 这样就导致系统资源的浪费. 比如接口MTU是4KB,然后很多数据包是1KB的.这样百分之75的内存空间都浪费了. Particle 就是解决系统浪费的问题的</p>
+
+<h1>Particles Buffer Management</h1>
+
+<p>particles buffer 是把多个不连续的内存区域考虑成一个逻辑区域.这样下来,一个数据包可能会打散到多个不连续的内存空间.这样的话的确提高了内存效率.只是系统内部的复杂度增高了.通常来说每个particle是固定的.下面就用一个例子讲下如何工作</p>
+
+<p><img src="/images/particle_pool.png"></p>
+
+<p>我们假设每个particle size是512bytes,P1,P2,P3. 我们收到了一个1200 bytes的数据包.</p>
+
+<ol>
+<li>发现P1是个空闲的,把前512Bytes复制到P1.</li>
+<li>发现P2是空闲的.然后把让P1,P2连起来,然后把中间的512bytes复制进去</li>
+<li>找到P3,连接P2,P3把最后的176 bytes复制进去.</li>
+</ol>
+
+
+<p>知道链表的人,已经完全看明白.其实这就是数据结构里面的链表的简单形式. 看这个图会更明显一些.</p>
+
+<p><img src="/images/Particle_buffer_header.png"></p>
+
+<p>其中数据包头自然就是数据包的头,particle header,其实指向下个particle的空间.我估计就是个指针.data block就是数据包实实在在的pay load. 大多数IOS系统就是用这种方式来管理buffer的.你可以用show buffer命令看到.每个接口像之前讲过的一样,分public和private的.</p>
+
+<h1>Particle coalescing</h1>
+
+<p>由于process switching的特殊性(具体原因我也不知道,不过我猜大概是CPU在内存上面搜索多个表再操作内存很耗费资源). 所以cisco决定当process switching的时候,就会把已经分开的包再组合到一起. 这个过程就叫coalescing.具体的操作过程也是挺废话,挺没意思的.这里就不多说了.大概就是找到一块够大的内存,把分散的数据包复制进去,然后清空原来内存.</p>
+
+<h1>7200系列路由器</h1>
+
+<p>这个老掉牙的路由器,书上还讲了不同的型号和不同的板卡,在这就不浪费时间了.直接大概讲下硬件结构.</p>
+
+<p><img src="/images/7200_architecture.png"></p>
+
+<p>这个用的是7200作为例子. 后面为了提高转发性能又搞了TDM的架构作为改进.这个地方不再多说那种架构,在我看来TDM架构就是为了兼容现有架构情况下的一种妥协而已.在后面章节你会看到有SP转发引擎的路由器架构.</p>
+
+<h2>数据转发</h2>
+
+<p>在7200上面，由于没有单独的转发引擎。所有的转发其实都是CPU在承担的。</p>
+
+<h3>数据转发具体过程</h3>
+
+<ol>
+<li>数据先从实际的接口收到之后，复制到receive ring当中，这个receive ring有可能在IO内存或者在PCI内存当中。唯一的区别这里是数据包在进入内存的时候已经被打散成为particles。</li>
+<li>发给CPU一个终端请求。</li>
+<li>收到终端请求，根据接口private pool和系统public pool的情况放在pool当中。如果pool已经满了，就丢弃这个包。和之前讲的一样，先尝试放进private pool再试public pool</li>
+<li>由于数据包放入了pool当中。这样receive的ring可以重新被填充。可以继续接受新的数据包</li>
+<li>看CEF表或者cache表看是否可以直接转发走。如果不可以，重新把包组装起来给CPU。走进程转发，具体的进程转发就不在叙述一遍了</li>
+<li>查找出接口，改下MAC地址.</li>
+<li>放在output queue或者transmit ring当中（具体判断之前一章说过，不在此赘述）</li>
+<li>具体接口把数据从内存copy到接口，告诉CPU。</li>
+<li>CPU清理内存空间并让接口转发数据包</li>
+</ol>
+
+
+<h1>summary</h1>
+
+<p>其实这一章主要讲了下高效使用内存的方式，其他7200路由器架构和转发，只是复习了原来的内容。虽然在具体操作的时候的确要考虑他是一个连续的数据包还是分散的。但是逻辑上面他是一个数据包，其实没有太大差别。</p>
+
+    
+    
+  </article>
+</section>
+<div class="categories">
+  
+
+
+
+
+  
+</div>
+<div id="disqus_thread"></div>
+<script type="text/javascript">
+  var disqus_shortname = 'caibitim-github-com';
+  (function() {
+  var dsq = document.createElement('script');
+  dsq.type = 'text/javascript';
+  dsq.async = true;
+  dsq.src = '//' + disqus_shortname + '.disqus.com/embed.js';
+  (document.getElementsByTagName('head')[0] || document.getElementsByTagName('body')[0]).appendChild(dsq);
+  })();
+</script>
+
+    <footer>
+  Tim <!--[if lte IE 8]><span style="filter: FlipH; -ms-filter: "FlipH"; display: inline-block;"><![endif]--><span style="-moz-transform: scaleX(-1); -o-transform: scaleX(-1); -webkit-transform: scaleX(-1); transform: scaleX(-1); display: inline-block;">©</span><!--[if lte IE 8]></span><![endif]--> 2017 — Your Name
+  <address>
+  </address>
+</footer>
+
+  </body>
+</html>

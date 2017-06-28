@@ -1,0 +1,230 @@
+
+<!doctype html>
+<html>
+  <head>
+  <meta charset="utf-8">
+  <meta content="" name="description">
+  <meta content="Your Name" name="author">
+  <title>Inside Cisco IOS Software Architecture(第八章,QoS) — My Octopress Blog</title>
+  <link href="/favicon.png" rel="icon">
+  <link href="/stylesheets/default.css" rel="stylesheet">
+  <link href="/atom.xml" rel="alternate" title="My Octopress Blog" type="application/atom+xml">
+  <link href="/stylesheets/syntax.css" type="text/css" rel="stylesheet" />
+</head>
+  <body>
+    <header>
+      <nav>
+        <h3>
+          <a href="/blog/archives">主页</a>
+          <a href="/about">关于我</a>
+        </h3>
+      </nav>
+    </header>
+    <section>
+  <header>
+    <time datetime="2017-03-24T17:17:59-04:00">24.03.2017</time>
+    <h1><a href="/blog/2017/03/24/inside-cisco-ios-software-architecture-8th/">Inside Cisco IOS Software Architecture(第八章,QoS)</a></h1>
+  </header>
+  <article>
+    <p>这一章讲QOS,其实QOS我是有打算通过另外一本书来说的.这本书最后一章也只讲了出向排队的几种方式和一些命令,在此我们只讲书上的东西,超纲的东西我们通过其他书再讲.</p>
+
+<h1>QoS简述</h1>
+
+<p>书中提到QoS的背景,本质还是由于链路带宽不够用,路由器要区别对待不同类型的包.最常见的就是在拥塞的时候,路由器转发数据包选择先发什么后发什么,这叫做拥塞管理,或者是用一种方法避免拥塞.</p>
+
+<ul>
+<li>拥塞管理就是要再把数据包发送到出接口的时候,根据包的重要程度来选择先发什么,后发什么,从而避免对网络的影响</li>
+<li>拥塞避免就是限制排队来降低发送速度</li>
+</ul>
+
+
+<h2>拥塞管理</h2>
+
+<p>拥塞管理本质就是如何在一个出向接口排队,但是由于为了性能原因,有些排队策略的实现也和设备本身有关.这里我们主要讨论几种无关于硬件的排队方式. 其实这更像是一个单纯的数学问题,而非网络问题.这里涉及的排队策略有三种:</p>
+
+<ul>
+<li>Priority Queue(PQ)</li>
+<li>Custom Queue(CQ)</li>
+<li>Weighted Fair Queue(WFQ)</li>
+</ul>
+
+
+<p>我们之前讲过数据包是如何转发的.出向排队策略就是在transmit ring之前和排队到这个接口的queue之间.由于trasmit ring是FIFO(先到先出)的,过了trasmit ring的数据包就到了物理接口,最后被转发出去.所以数据包在转发的时候都是要放到接口的output queue,然后根据排队策略放到transmit ring的内存空间上面</p>
+
+<h3>Priority Queue</h3>
+
+<p>PQ策略很简单,priority高的永远优先.就好像是去银行排队,你如果是VIP客户,下一个永远叫的是VIP,VIP之间就是FIFO. 缺点当然也很明显,如果优先级比较高的很多的话,优先级比较低的可能会永远排不到. 就好像你去银行排队,你看着你前面有一个人,结果一会来一个VIP.你发现你可能一辈子都排不上.</p>
+
+<p>我们用配置和例子来讲述下,相关的查看命令需要的话就查查config guide.</p>
+
+<p><img src="/images/PQ.png"></p>
+
+<p>这个图可以看到这个在S0接口调用了PQ这个策略,PQ中然后分为high, medium, normal.</p>
+
+<p>数据包根据ACL匹配把数据包分到3个不同的queue当中. 当实际转发的过程中,就是会数据包2,4先发送,然后5,最后是1,3,6.只有当high空的时候才能发medium的数据包,当medium也为空的时候,才能发normal里面的数据包</p>
+
+<h3>Custom Queue</h3>
+
+<p>CQ其实是对于PQ的一种优化.避免了优先级比较低的数据包永远发不出去的窘境.其实就是在转发高优先级的时候转发到一定程度就不发了,然后去看次优先级的包.这样循环下去,从这个角度来看是个round robin.具体发到什么程度,通过一个例子就可以说的很清楚了.</p>
+
+<p><img src="/images/CQ.png"></p>
+
+<p>可以看到配置的时候设置不同的queue有不同的byte-count,这个参数其实有点像token一样.实际转发中,其实就是说你能转发多少bytes.</p>
+
+<p>图中你也可以看到初始状态下面不同queue中有不同的包,首先,queue1可以转发1000bytes,这样数据包2可以被转发走.然后还可以转发500,下个数据包是4.虽然token不够了,依旧转发走.其实就是这个queue当中当byte大于0的时候一直可以转发,直到可转发的bytes小于0.queue2可以转发1000个,但是数据包5只有200bytes,这样转发完数据包5就去queue3转发数据包.到了queue3,数据包1,3,6都会被转发走.这样再回到queue1.
+我们大体可以说queue1,2,3是按照1:1:2的比例转发的.当然这也要看具体数据包当时的情况.但是可以肯定的是说CQ是保障了高优先级的同时,也让低级优先级的也转发走.</p>
+
+<h3>Weighted Fair Queuing</h3>
+
+<p>这样其实又根据设备不同分了可以在线卡上面直接处理的和要在控制在CPU处理的.我们在这主要讲述和平台无关的 Flow-based WFQ和Class based WFQ.</p>
+
+<p>我们很经常听到CBFWQ,很少再听到Flow-based WFQ.其实就是因为Flow based WFQ就是CBFWQ的更简陋版本.</p>
+
+<h4>Flow-based WFQ</h4>
+
+<p>这里其实就是根据数据包的某些字段(源目IP,TOS字节,TCP/UDP端口号)来定义一个流,然后对于这个流进行WFQ排队.既然是weighted,那自然要计算这个数据包的权重值.</p>
+
+<p>权重值=4096/(IP precedence+1)</p>
+
+<p>然后根据权重值算出来他们的序列号,最后根据序列号大小排队.</p>
+
+<p>序列号=当前序列号+(权重*包长),当实际排队进入transmit queue的时候,就取最小的序列号.</p>
+
+<p>此处比较绕的就是当前序列号,这个就要分情况看. 当一个数据包计算序列号的时候,先看自己流是不是空的,如果是空的.就用当前传输的序列号做当前序列号,如果不是空的.就用这个流队列的序列号进行计算.</p>
+
+<p>此处我们用一个例子说明.假如我们有3个流,ABC,有5个数据包</p>
+
+<ul>
+<li>A1,A2-都是500bytes IPP=0</li>
+<li>B1,B2-400butes IPP=0</li>
+<li>C1-40 bytes IPP=3</li>
+</ul>
+
+
+<p>最开始A1先到,A1权重值是4095,序列号就是 4096*500+0(因为第一个包,当前序列号为0)=2048000,A1进入A队列</p>
+
+<p>A2在A1之后到,A2的序列就是4096*500+204800=4096000,因为A2也要进入A队列,但是A队列不为空,A2使用的当前序列号就是A1的序列号.</p>
+
+<p>B1,B2在A2之后到要进入B队列,假如这个时候A1要被发出去. B1计算序列号就不能是按0计算,而是按A1的序列号计算.B1=2048000+(4096+400)=3686400,B2类似于A2.B2=3686400+(4096*400)=5324800</p>
+
+<p>这个时候假如A1发送出去了,那下一个要发送出去的就是B1而非A2.
+这个时候C1数据包进来,同理由于C队列是空的,C数据包的序号就是3686400+(1024*40).</p>
+
+<p>你可以发现这个时候C1数据包在A2,B2之前就发出去了.</p>
+
+<p>我们这样做的根本目的是为了什么呢?很明显,我们是根据数据包的TOS和数据包的大小来排队把数据发出去. TOS字段很好理解,是因为这个区分了不同等级的服务.考虑数据包包长的原因是因为,一个接口传送数据的速度是有限的.在相同情况下,能传送更多小数据包,从而提高整个系统的效率.比如大家去银行排队,有些人就是去柜台弄个存款业务,很快就搞定了,如果让这些人插队.这样虽然不公平,但是对于银行来说整个效率是提高了,减少了所有人的平均等待时间.</p>
+
+<p>在网络中,比如说你路由器同时处理一个telnet和一个FTP流量,telnet流量很小,但是对于延迟的容忍度就低一些.FTP一般数据量大的多,慢个一时半会也不会被发现.这样的情况下,WFQ就自动帮telnet加速,你基本完全不用配置.</p>
+
+<p>其余的具体配置方法部分就不在这进入深入,有兴趣可以查看config guide</p>
+
+<h4>Classed-Based WFQ</h4>
+
+<p>这个就是我们现在非常容易用到的CBWFQ,在这个书上说CBFWQ还是一个非常先进的技术.</p>
+
+<p>这个就是大家现在日常使用的MQC配置方法了,先配置一个class,在这个class里面定义你想匹配的流量类型,然后针对于这个class在policy-map当中进行处理,最后在接口调用这个policy-map就好了.</p>
+
+<p>在这个里面我们非常常用的两个参数bandwidth和priority(其实就是LLQ)在这个地方需要单独拿出来说一下.</p>
+
+<p>举个例子</p>
+
+<p><img src="/images/CBWFQ.png"></p>
+
+<p>图上说的priority和bandwith这两个命令就是CBWFQ我们常用的排队命令. Cisco官方也有一个表专门解释他们的区别,其实这也是一方面说明了很多时候这个玩意是疑惑到很多人的.</p>
+
+<p><img src="/images/priority_bandwidth.png"></p>
+
+<p><a href="http://www.cisco.com/c/en/us/support/docs/quality-of-service-qos/qos-packet-marking/10100-priorityvsbw.html">Cisco解释链接</a></p>
+
+<p>我个人觉得以这样的理解方式会好很多.首先priority这个命令,其实就是在CBWFQ当中创建了一个CQ,这个CQ永远会被优先处理,你配置的priority xx,xx就是相当于给这个PQ多少的token,类似于刚才CQ提到的传输多少个bytes一样.当然如果这个CQ是空的话,token是可以被其他队列使用的. 举个例子,你去银行排队,一个小时银行可以处理20个人,如果我们配置了priority 5,意思是说我优先处理5个VIP客户,其他15个人正常处理.那如果一个小时先来了5个VIP,15个普通客户,那银行就先处理5个VIP.然后再处理15个人.当处理15个人的过程中,突然又来了5个VIP,这5个VIP就下个小时再处理了. 但是如果没有VIP客户来,或者来了20个VIP客户.这些其实对于银行来说都不算拥塞,在一个小时就处理完了.</p>
+
+<p>对于bandwidth命令,我们是说这个class,我有多少的权重值来转发数据包.比如你是一个10M的口,这个地方你配置百分之20,或者2M,都是要把百分之20的权重给这个class,不同于刚才提到的CQ,这个百分之20并非会被优先处理,而仅仅是有百分之20的权重.比如说10M的口,2M的带宽.可能是每10个包处理的时候有2个包给了这个class,并非像是priority 命令一样.完全是先把这2M处理掉. 关于更细节CBWFQ的内容,这本书没有提及,我也不过多意淫.等到具体QoS书籍的时候,会有更详细的内容.</p>
+
+<h4>Distributed Queue</h4>
+
+<p>如果你考虑下之前的转发过程,会发现如果系统CPU介入QoS排队,还是非常消耗系统资源的.Distributed Queue本质就是说让线卡级别的CPU完成排队,数据包也不需要在SRAM和DRAM之间复制来去.具体内容书上也没有说的很清楚,我也不方便意淫太多.</p>
+
+<h4>Modified Deficit round robin</h4>
+
+<p>这个是12000系列路由器来管理排队的一种方式,其实看上去是个CQ的或者说是CBWFQ的变种.他其中有一个非常特殊的queue,这个特殊的queue有两个工作模式:</p>
+
+<ul>
+<li>strict priority queue,这个类似于PQ,不管怎么样,一定要先处理我的.后面的饿死也无所谓.</li>
+<li>alternate mode,这个类似于CQ指定传输多少bytes.不同的就是他再处理其他queue之后一定会返回这个特殊queue</li>
+</ul>
+
+
+<p>举个例子,我语言能力实在有限.</p>
+
+<ul>
+<li>queue 0 能传输1500bytes,是特殊queue,在alternate mode下.</li>
+<li>queue 1 能传输3000bytes</li>
+<li>queue 2 能传输1500bytes</li>
+</ul>
+
+
+<p><img src="/images/12000_queue.png"></p>
+
+<p>1/250表示这是第一个包,有250bytes大小. 首先数据包1,可以被传输,然后还能传输1250bytes,继续数据包2能被传输.这样queue0就是-250.然后去queue1处理数据包,接下来数据包4,5被传输出去,queue1能传输的数据变为0.这个时候,特殊就在于接下来并非要处理queue2,而是回到queue0,继续处理queue0中的数据.这个时候queue0能处理的数据是-250+150=1250.然后数据包3就传输出去了.这个时候queue就是空,可传输数据会被置为0.然后处理queue2,非queue1.这个时候数据包queue2可以传输1500bytes.这样数据包7,8,9,10都能被传输走.这个时候queue2能传送的数据包为0,回到queue1.然后就是传输数据包6,然后queue1空了,再传输queue2中的数据包11.</p>
+
+<h2>拥塞避免</h2>
+
+<h3>RED</h3>
+
+<p>我们这里主要通过random early detection(RED)从而把TCP连接降速来避免拥塞. TCP传输速度是通过一个滑动窗口来控制的.滑动窗口会根据现在的速度不停的增大,直到出现拥塞.如果我们是一个FIFO的队列,结果就是导致了最后的包都被丢掉,由于丢掉的过多,然而会把窗口又搞的很小.</p>
+
+<p><img src="/images/RED.png"></p>
+
+<p>图中可以如果只是FIFO的情况下,TCP的带宽使用情况.为了避免出现这种情况,就出现了RED算法,就是发现不行了,早点开始丢包.这样让窗口在更早的时候缩小,而不会出现那么大的滑落.那RED算法中就有2个值我们需要考虑,min,max.</p>
+
+<ul>
+<li>当前速度低于min值,完全安全,不丢包</li>
+<li>当前速度在min到max之间,开始丢,随着现在实际速度增长开始越丢越多.</li>
+<li>高于max值,全都丢.</li>
+</ul>
+
+
+<h3>Selective packet discard</h3>
+
+<p>当输入的包queue开始处理不过来了,这个时候IOS就开始选择性丢包,保证路由包或者是保持网络正常运行的包不会被丢弃.这个feature已经被IOS自己实现了,完全不需要你做任何配置.只要是被IOS识别出来重要的包.丢不会被丢弃的.</p>
+
+<h2>其他</h2>
+
+<p>这里其实没说很多QoS,比如说CAR,GTS,RSVP等等,因为毕竟这是一本讲IOS的书,并非专门讲QoS的书.我们会在其他的书中,把QoS这个单独拉出来说.</p>
+
+<h1>summary</h1>
+
+<p>这就是这本书最后一章,也是博客完成的第一本书的读书陪读笔记. 希望有人喜欢,觉得有用.</p>
+
+    
+    
+  </article>
+</section>
+<div class="categories">
+  
+
+
+
+
+  
+</div>
+<div id="disqus_thread"></div>
+<script type="text/javascript">
+  var disqus_shortname = 'caibitim-github-com';
+  (function() {
+  var dsq = document.createElement('script');
+  dsq.type = 'text/javascript';
+  dsq.async = true;
+  dsq.src = '//' + disqus_shortname + '.disqus.com/embed.js';
+  (document.getElementsByTagName('head')[0] || document.getElementsByTagName('body')[0]).appendChild(dsq);
+  })();
+</script>
+
+    <footer>
+  Tim <!--[if lte IE 8]><span style="filter: FlipH; -ms-filter: "FlipH"; display: inline-block;"><![endif]--><span style="-moz-transform: scaleX(-1); -o-transform: scaleX(-1); -webkit-transform: scaleX(-1); transform: scaleX(-1); display: inline-block;">©</span><!--[if lte IE 8]></span><![endif]--> 2017 — Your Name
+  <address>
+  </address>
+</footer>
+
+  </body>
+</html>
