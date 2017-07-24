@@ -1,0 +1,185 @@
+
+<!doctype html>
+<html>
+  <head>
+  <meta charset="utf-8">
+  <meta content="" name="description">
+  <meta content="Your Name" name="author">
+  <title>端到端QoS网络设计(第二章) — My Octopress Blog</title>
+  <link href="/favicon.png" rel="icon">
+  <link href="/stylesheets/default.css" rel="stylesheet">
+  <link href="/atom.xml" rel="alternate" title="My Octopress Blog" type="application/atom+xml">
+  <link href="/stylesheets/syntax.css" type="text/css" rel="stylesheet" />
+</head>
+  <body>
+    <header>
+      <nav>
+        <h3>
+          <a href="/blog/archives">主页</a>
+          <a href="/about">关于我</a>
+        </h3>
+      </nav>
+    </header>
+    <section>
+  <header>
+    <time datetime="2017-07-24T16:14:31-04:00">24.07.2017</time>
+    <h1><a href="/blog/2017/07/24/end-to-end-qos-network-design-2nd.markdown/">端到端QoS网络设计(第二章)</a></h1>
+  </header>
+  <article>
+    <h1>端到端QoS网络设计(第二章)</h1>
+
+<p>最近人比较懒,一直没有保持一个更新频度. 从这篇开始,我尽量保证一周能至少更新一篇. 由于这个是读书笔记,之前我总是想把书中的玩意尽量写下来,反而导致每一篇文章结构反而很乱. 从这篇开始我尽量保证文章本身的结构.书中可能有些东西不是很重要的,我就直接跳过了. 推荐大家看完这个玩意,再翻翻书.</p>
+
+<h2>基于IOS的QoS架构和配置</h2>
+
+<p>这一章主要讲三个大的知识点:</p>
+
+<ol>
+<li>QoS部署的准则</li>
+<li>IOS设备中QoS的框架</li>
+<li>具体配置</li>
+</ol>
+
+
+<p>具体配置这一块我觉得具体没啥意思, 虽然他很实用. 大家总是可以从config guide中得到具体的配置方法, 具体的配置会因平台不同,设备不同,版本不同最后配置都不一样. 我认为最好的学习方式还是通过概念理解配置原理, 最后具体是什么设备,怎么配置这些事情, 查查config guide大概就搞定了.</p>
+
+<h3>部署准则</h3>
+
+<p>书中提到了一个非常规范和理想化的QoS配置步骤,实际当中估计很少人能真的按这个做下来.不过大家可以用来参考作为查漏补缺.</p>
+
+<ol>
+<li>首先要定义的是部署QoS的目的,最原本的需求到底是什么.</li>
+<li>找到具体有哪些应用程序应该被分类. 从网络的角度就是什么协议,端口号是什么.</li>
+<li>根据需求来分析出应该用什么样的QoS工具</li>
+<li>根据要用的具体设备考虑怎么配置</li>
+<li>实验环境测试</li>
+<li>找个试点做测试</li>
+<li>生产网络逐步部署</li>
+<li>测试</li>
+</ol>
+
+
+<p>你会发现其实QoS最好的部署并不是从技术开始的. 实际工作中,大家会发现其实用户的需求这一块从来都是模棱两可的.</p>
+
+<h3>QoS具体框架</h3>
+
+<p>这里我们再次回顾下QoS的框架, 然后具体看下在路由器中的执行顺序.</p>
+
+<ol>
+<li>classification: 把数据包放在哪个类当中</li>
+<li>markings: 根据分类,修改数据包中header(比如二层中的COS, 三层中的DSCP)</li>
+<li>Policing(dropping and markdown): 根据包的分类情况做包的丢弃或者remark.</li>
+<li>Shaping: 把traffic的速度降到一个速度.</li>
+<li>Queuing: 接口排队策略</li>
+<li>bandwidth allocation: 保证出接口的资源不超过配置的的带宽资源.</li>
+<li>Admission control: 根据资源情况使用情况, 拒绝或者通过某种数据包.</li>
+</ol>
+
+
+<h3>QoS 执行顺序</h3>
+
+<p><img src="/images/QoS_sequence.png"></p>
+
+<p>大体来看,从执行顺序来看QoS分为四类:</p>
+
+<ol>
+<li>Classification: 根据流量类型分类</li>
+<li>Pre-queuing: 在这个地方做丢包,marking,policing.</li>
+<li>Queuing: 出向排队</li>
+<li>post-queuing: 我觉得非常不常见, 书上说的情景我也是看的一脸蒙逼. 这个就是书中提到的例子: 根据传输顺序次序来为流量执行一些操作的时候(比如加密和压缩),这个时候QoS会在queue之后才做.</li>
+</ol>
+
+
+<p>我们回来再看这个图.其实图中1,2,6,7,12都和QoS没啥关系. 其中3/8这种做的分类其实是越早越好.其中8这个地方存在的意义在于两点.其中之一是本地产生的数据包,是不会走到3这一步的. 另外的就是有时候会根据下一跳或者出接口做分类.这样在7之前是做不了分类的. 4/9同理. 剩下的我觉得还是非常清楚.</p>
+
+<h3>MQC 工具</h3>
+
+<p>这块主要就是和配置有关了.大家配置过cisco设备的QoS的大概也知道是什么了.其实就是三个map, class-map分类, policy-map 选择针对class做什么事情(这个地方可以做的就非常多了, 之前所有提到的各种减速,排队,等等都是在这个地方完成的). 最后就是service policy在某个接口上面调用. 这个地方我们主要说原理,具体配置的话,大家有兴趣翻本config guide或者对照下书中的配置例子.</p>
+
+<h4>Class-map</h4>
+
+<p>Class-map就是对流量进行分类.可以用来分类的工具有三种:</p>
+
+<ol>
+<li>包上面本身的marking的字段,二层的COS,三层的DSCP,MPLS的EXP之类</li>
+<li>数据包二层到三层信息.其实严格来说可以说1是2的子集.这个地方主要指的是用ACL的方式匹配到的地址,端口,其中的某个字段, 1描述中的COS和DSCP也其实都是包头的信息.</li>
+<li>具体的应用程序.这个地方就是cisco具体的实现了,他是通过包payload的内容来匹配应用程序. 比如说你要匹配skype流量,就可以直接match protocol skype. 看着很炫酷,但是实际中有很多问题, 比如当skype的实现有所变化的时候可能出现cisco的匹配方式可能会匹配不到的情况.</li>
+</ol>
+
+
+<h4>Policy-map</h4>
+
+<p>这个地方就是讲分类的流量进行处理.具体处理方式多种多样,之前提到对于数据包的处理都是在policy-map当中. 处理方式如下:</p>
+
+<ul>
+<li>带宽的分配</li>
+<li>出向的排队</li>
+<li>流量shapping</li>
+<li>流量policing</li>
+<li>重新对包进行marking</li>
+<li>包计数(我tm也不知道这个具体是什么鸟玩意)</li>
+<li>包头压缩(没听说过)</li>
+<li>包丢弃和包通过</li>
+</ul>
+
+
+<h4>Service-policy</h4>
+
+<p>这个就是具体在逻辑三层接口上面的出向或者入向应用policy-map.</p>
+
+<h3>Auto Qos</h3>
+
+<p>这个玩意我实际中见到过,会自动生成一大堆的配置. 我们需要做的就是在接口上面的配置一个命令,声明一下这个接口是干嘛的, 然后系统自动帮你搞定.最常见的应用场景是IOS平台的VOIP.</p>
+
+<p>在Catalyst交换机上面, auto QoS VOIP会做下列行为:</p>
+
+<ol>
+<li>保证这个口是可以被信任的cisco IP 电话</li>
+<li>保证口是个access接口</li>
+<li>对于voice会用strict-priority queue,剩下的流量就是weighted round-robin方式</li>
+<li>二层COS会自动mapping到三层的IP DSCP.</li>
+<li>会根据COS的字段来排出向的queue</li>
+<li>可能会修改queue的大小和权重</li>
+</ol>
+
+
+<p>对于低速的接口,FR, ATM, HDLC,PPP也会有一些Auto Qos策略.大体是保证链路不会被完全使用.但是这些链路现在使用的机会也比较少了.所以此处我就略过了.</p>
+
+<p>具体的配置方面,大家可以翻看一本Cisco的config guide. 简单来说,你可以通过一条命令配置这个口成为Cisco的语音或者视频设备.然后系统自动的生成配置,然后调整出向queue的权重,带宽大小. 此处不在细说具体生成了什么配置,到底有什么样的影响. 因为Auto Qos设计出来就是为了简化配置,如果你仔细研究,实在没有必要用这个auto QoS,仔细研究搞的会比自己配更复杂. 而且这个是一个Cisco的实现技术,他随时可以更新.对于学习原理来说,实在是浪费时间.</p>
+
+<h2>Summary</h2>
+
+<p>这章还是简述QoS大体的框架,如何配置,以及可以做auto QoS. 接下来, 就会仔细讲一下具体的每一块的细节.</p>
+
+    
+    
+  </article>
+</section>
+<div class="categories">
+  
+
+
+
+
+  
+</div>
+<div id="disqus_thread"></div>
+<script type="text/javascript">
+  var disqus_shortname = 'caibitim-github-com';
+  (function() {
+  var dsq = document.createElement('script');
+  dsq.type = 'text/javascript';
+  dsq.async = true;
+  dsq.src = '//' + disqus_shortname + '.disqus.com/embed.js';
+  (document.getElementsByTagName('head')[0] || document.getElementsByTagName('body')[0]).appendChild(dsq);
+  })();
+</script>
+
+    <footer>
+  Tim <!--[if lte IE 8]><span style="filter: FlipH; -ms-filter: "FlipH"; display: inline-block;"><![endif]--><span style="-moz-transform: scaleX(-1); -o-transform: scaleX(-1); -webkit-transform: scaleX(-1); transform: scaleX(-1); display: inline-block;">©</span><!--[if lte IE 8]></span><![endif]--> 2017 — Your Name
+  <address>
+  </address>
+</footer>
+
+  </body>
+</html>
